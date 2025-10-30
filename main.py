@@ -8,7 +8,7 @@ from dotenv import load_dotenv
 # Load environment variables from .env file
 load_dotenv()
 TOKEN = os.getenv("higa")   # 🔹 Load token securely
-DISPLAY_NAME = "r4e"                 # 🔹 Name shown when reuploading
+DISPLAY_NAME = "FlagMap Bot"                 # 🔹 Name shown when reuploading
 
 # ------------------- Discord Setup -------------------
 intents = discord.Intents.default()
