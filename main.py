@@ -1,11 +1,14 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import sqlite3, aiohttp, io, asyncio
+import sqlite3, aiohttp, io, asyncio, os
 from datetime import datetime
+from dotenv import load_dotenv
 
-TOKEN = "Higa"       # 🔹 Replace this with your bot token
-DISPLAY_NAME = "r4e"           # 🔹 Name shown when reuploading
+# Load environment variables from .env file
+load_dotenv()
+TOKEN = os.getenv("higa")   # 🔹 Load token securely
+DISPLAY_NAME = "r4e"                 # 🔹 Name shown when reuploading
 
 # ------------------- Discord Setup -------------------
 intents = discord.Intents.default()
@@ -60,7 +63,7 @@ async def copy(interaction: discord.Interaction):
     await interaction.followup.send(f"✅ Stored `{count}` image(s)` in the database.", ephemeral=True)
 
 # -----------------------------------------------------
-@bot.tree.command(name="paste", description="Paste stored images into this channel (progress bar, auto-clear).")
+@bot.tree.command(name="paste", description="Paste stored images into this channel (progress bar).")
 async def paste(interaction: discord.Interaction):
     user_id = interaction.user.id
     if user_id in active_tasks:
@@ -109,13 +112,11 @@ async def paste(interaction: discord.Interaction):
             except Exception as e:
                 print(f"⚠️ Error uploading {filename}: {e}")
 
-    # Clean up
+    # 🟢 Keep images stored (no delete)
     del active_tasks[user_id]
-    cur.execute("DELETE FROM images")
-    conn.commit()
 
     embed.color = discord.Color.green()
-    embed.description = f"✅ Uploaded {sent}/{total} image(s). Database cleared."
+    embed.description = f"✅ Uploaded {sent}/{total} image(s). Images remain stored in the database."
     embed.set_field_at(0, name="Progress", value="100%", inline=False)
     await progress_msg.edit(embed=embed)
     await interaction.followup.send(f"🎉 Finished uploading {sent} image(s)!", ephemeral=True)
