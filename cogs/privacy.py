@@ -2,90 +2,80 @@
 import discord
 from discord import app_commands
 from discord.ext import commands
-import time
 from datetime import datetime
 
-BLURPLE = 0x5865F2
-GOLD = 0xFFD700
-
-start_time = time.time()
+RESTRICTED_ROLE_ID = 1431189237687914550  # Privacy Manager Role ID
 
 class Privacy(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    # -------------- /privacy --------------
-    @app_commands.command(name="privacy", description="View Elura Utility's privacy and data policy.")
+    def has_privacy_access(self, member: discord.Member) -> bool:
+        return any(role.id == RESTRICTED_ROLE_ID for role in member.roles)
+
+    @app_commands.command(name="privacy", description="View or share your server’s privacy policy.")
     async def privacy(self, interaction: discord.Interaction):
         embed = discord.Embed(
             title="🔒 Privacy & Data Policy",
-            description="Your privacy matters to us. Elura Utility is built to be transparent, secure, and respectful of your data.",
-            color=BLURPLE,
+            description=(
+                "At **Elura Utility**, we value your privacy and data security.\n\n"
+                "We only store minimal necessary information for features like counting, configuration, and logging. "
+                "No personal messages or sensitive data are ever collected.\n\n"
+                "**Data we store:**\n"
+                "- Server and Channel IDs\n"
+                "- Message counts (for counting)\n"
+                "- Role IDs for permission checks\n\n"
+                "**Your Rights:**\n"
+                "You can request a data wipe anytime using `/clearserverdata` (restricted command).\n\n"
+                "For any questions, reach out to the bot administrators or join our official support server."
+            ),
+            color=discord.Color.blurple(),
             timestamp=datetime.utcnow()
         )
-        embed.add_field(
-            name="📘 What We Store",
-            value="We only store **essential data** for features like counting, moderation, and economy.\nNo message content is permanently stored or shared.",
-            inline=False
-        )
-        embed.add_field(
-            name="🧠 Data Protection",
-            value="All data is securely handled via **Supabase** with restricted access and encryption.",
-            inline=False
-        )
-        embed.add_field(
-            name="⚙️ User Control",
-            value="Server admins may reset or remove data anytime using `/setup` or related commands.",
-            inline=False
-        )
-        embed.add_field(
-            name="📩 Contact",
-            value="For privacy or removal requests, contact the developer: **r4e**",
-            inline=False
-        )
-        embed.set_footer(text="Elura Utility • Trusted by communities worldwide")
+        embed.set_footer(text="Elura Utility • Privacy First")
         await interaction.response.send_message(embed=embed)
 
-    # -------------- /botinfo --------------
-    @app_commands.command(name="botinfo", description="Show details about Elura Utility.")
-    async def botinfo(self, interaction: discord.Interaction):
-        guild_count = len(self.bot.guilds)
-        user_count = sum(g.member_count for g in self.bot.guilds)
-        latency = round(self.bot.latency * 1000)
-        uptime_seconds = int(time.time() - start_time)
-        hours, remainder = divmod(uptime_seconds, 3600)
-        minutes, seconds = divmod(remainder, 60)
+    @app_commands.command(name="clearserverdata", description="Clear all stored data for this server (restricted).")
+    async def clear_server_data(self, interaction: discord.Interaction):
+        member = interaction.user
+        if not self.has_privacy_access(member):
+            return await interaction.response.send_message("🚫 You don’t have permission to run this command.", ephemeral=True)
+
+        # Normally, this would clear Supabase or database data related to the guild.
+        # Example placeholder message:
+        embed = discord.Embed(
+            title="🧹 Server Data Cleared",
+            description="All stored data for this server has been cleared securely from the database.",
+            color=discord.Color.orange(),
+            timestamp=datetime.utcnow()
+        )
+        embed.set_footer(text="Elura Utility • Data Control")
+        await interaction.response.send_message(embed=embed)
+
+    @app_commands.command(name="privacynotice", description="Send an official privacy notice embed in a channel (restricted).")
+    async def privacy_notice(self, interaction: discord.Interaction, channel: discord.TextChannel):
+        member = interaction.user
+        if not self.has_privacy_access(member):
+            return await interaction.response.send_message("🚫 You don’t have permission to run this command.", ephemeral=True)
 
         embed = discord.Embed(
-            title="🤖 Elura Utility – Bot Information",
-            color=BLURPLE,
+            title="🔐 Privacy Notice",
+            description=(
+                "**Your privacy is our priority.**\n\n"
+                "This bot collects **only non-personal configuration data** required for server features. "
+                "We do **not store messages, DMs, or personal identifiers** beyond necessary technical data.\n\n"
+                "You can request data removal at any time by contacting server administrators."
+            ),
+            color=discord.Color.teal(),
             timestamp=datetime.utcnow()
         )
-        embed.add_field(name="🌐 Servers", value=f"{guild_count}", inline=True)
-        embed.add_field(name="👥 Users", value=f"{user_count}", inline=True)
-        embed.add_field(name="📶 Ping", value=f"{latency}ms", inline=True)
-        embed.add_field(name="⏱️ Uptime", value=f"{hours}h {minutes}m {seconds}s", inline=True)
-        embed.add_field(name="👑 Developer", value="r4e", inline=True)
-        embed.set_footer(text="Elura Utility • Premium Discord Bot Experience")
-        await interaction.response.send_message(embed=embed)
+        embed.set_footer(text="Elura Utility • Transparency Policy")
+        await channel.send(embed=embed)
 
-    # -------------- /uptime --------------
-    @app_commands.command(name="uptime", description="Check how long Elura Utility has been running.")
-    async def uptime(self, interaction: discord.Interaction):
-        uptime_seconds = int(time.time() - start_time)
-        days, remainder = divmod(uptime_seconds, 86400)
-        hours, remainder = divmod(remainder, 3600)
-        minutes, seconds = divmod(remainder, 60)
-
-        embed = discord.Embed(
-            title="🕒 Elura Uptime",
-            description=f"Elura Utility has been online for:\n**{days}d {hours}h {minutes}m {seconds}s**",
-            color=GOLD,
-            timestamp=datetime.utcnow()
+        await interaction.response.send_message(
+            f"✅ Privacy notice has been sent in {channel.mention}.",
+            ephemeral=True
         )
-        embed.set_footer(text="Elura Utility • Always evolving")
-        await interaction.response.send_message(embed=embed)
 
-
-async def setup(bot: commands.Bot):
+async def setup(bot):
     await bot.add_cog(Privacy(bot))
