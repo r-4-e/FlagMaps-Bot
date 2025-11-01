@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from utils.supabase_client import supabase  # shared Supabase connection
 import random
+from cogs.database import supabase
 
 class Fun(commands.Cog):
     """Fun & interactive commands for entertainment."""
