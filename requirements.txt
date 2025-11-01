@@ -3,5 +3,5 @@ python-dotenv==1.0.1
 supabase==2.4.0
 psycopg2-binary==2.9.9
 audioop-lts
-googletrans==4.1.0-rc1
+googletrans==4.0.1
 Pillow==10.4.0
