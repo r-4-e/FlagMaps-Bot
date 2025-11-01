@@ -4,6 +4,7 @@ from discord.ext import commands
 from datetime import datetime
 from supabase import create_client, Client
 import os
+from cogs.database import supabase
 
 # ------------------- Supabase Connection -------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
