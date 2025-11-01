@@ -1,77 +1,136 @@
 import os
-from discord.ext import commands
 from supabase import create_client, Client
 from dotenv import load_dotenv
+import sqlite3
 
+# Load environment variables (.env)
 load_dotenv()
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase: Client | None = None
+local = None
+
+# Initialize Supabase or fallback to SQLite
+try:
+    if SUPABASE_URL and SUPABASE_KEY:
+        supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+        print("✅ Connected to Supabase successfully!")
+    else:
+        raise ValueError("Supabase credentials not found.")
+except Exception as e:
+    print(f"⚠️ Supabase unavailable: {e}")
+    print("💾 Using local SQLite fallback (data.db)")
+    local = sqlite3.connect("data.db")
+    local.row_factory = sqlite3.Row
 
 
-def ensure_tables_exist():
-    """
-    Automatically ensures that all required tables exist in Supabase.
-    Safe to call multiple times — won't duplicate tables.
-    """
-    required_tables = {
-        "images": """
-            CREATE TABLE IF NOT EXISTS images (
-                id BIGSERIAL PRIMARY KEY,
-                author TEXT,
-                url TEXT,
-                filename TEXT,
-                timestamp TEXT
-            );
-        """,
-        "economy": """
-            CREATE TABLE IF NOT EXISTS economy (
-                id BIGSERIAL PRIMARY KEY,
-                user_id TEXT,
-                balance BIGINT DEFAULT 0,
-                last_daily TIMESTAMP
-            );
-        """,
-        "punishments": """
-            CREATE TABLE IF NOT EXISTS punishments (
-                id BIGSERIAL PRIMARY KEY,
-                user_id TEXT,
-                moderator_id TEXT,
-                type TEXT,
-                reason TEXT,
-                timestamp TIMESTAMP DEFAULT NOW()
-            );
-        """
-    }
+class Database:
+    """Centralized database helper for Supabase + SQLite fallback."""
 
-    for name, query in required_tables.items():
+    def __init__(self):
+        self.supabase = supabase
+        self.local = local
+
+        if self.local:
+            self.create_local_tables()
+
+        if self.supabase:
+            self.ensure_remote_tables()
+
+    # === Supabase Setup ===
+    def ensure_remote_tables(self):
+        """Ensure Supabase has all required tables."""
         try:
-            # Check if table exists by attempting a select
-            supabase.table(name).select("*").limit(1).execute()
-            print(f"🗄️ Verified table: {name}")
-        except Exception:
-            print(f"⚙️ Creating missing table: {name}")
-            try:
-                # Run SQL command safely via RPC
-                supabase.postgrest.rpc("sql", {"query": query})
-                print(f"✅ Table '{name}' created successfully.")
-            except Exception as e:
-                print(f"❌ Failed to ensure table '{name}': {e}")
+            ddl = """
+            CREATE TABLE IF NOT EXISTS economy (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                balance BIGINT DEFAULT 0,
+                UNIQUE (guild_id, user_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS settings (
+                guild_id TEXT PRIMARY KEY,
+                welcome_channel TEXT,
+                modlog_channel TEXT
+            );
+
+            CREATE TABLE IF NOT EXISTS cases (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                case_id BIGINT NOT NULL,
+                case_type TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                moderator_id TEXT NOT NULL,
+                reason TEXT,
+                timestamp TEXT,
+                UNIQUE (guild_id, case_id)
+            );
+            """
+            self.supabase.postgrest.rpc("exec", {"sql": ddl}).execute()
+            print("✅ Verified Supabase schema for economy + punishments.")
+        except Exception as e:
+            print(f"⚠️ Could not verify Supabase tables: {e}")
+
+    # === SQLite Setup ===
+    def create_local_tables(self):
+        """Fallback local tables."""
+        cur = self.local.cursor()
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS economy (
+            guild_id TEXT,
+            user_id TEXT,
+            balance INTEGER DEFAULT 0,
+            PRIMARY KEY (guild_id, user_id)
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            guild_id TEXT PRIMARY KEY,
+            welcome_channel TEXT,
+            modlog_channel TEXT
+        )
+        """)
+        cur.execute("""
+        CREATE TABLE IF NOT EXISTS cases (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            guild_id TEXT,
+            case_id INTEGER,
+            case_type TEXT,
+            user_id TEXT,
+            moderator_id TEXT,
+            reason TEXT,
+            timestamp TEXT
+        )
+        """)
+        self.local.commit()
+        print("💾 Local SQLite tables verified.")
+
+    # === Economy methods ===
+    async def fetch_economy(self, guild_id, user_id):
+        if self.supabase:
+            data = self.supabase.table("economy").select("*").eq("guild_id", str(guild_id)).eq("user_id", str(user_id)).execute().data
+            return data[0] if data else None
+        cur = self.local.cursor()
+        cur.execute("SELECT * FROM economy WHERE guild_id=? AND user_id=?", (str(guild_id), str(user_id)))
+        return cur.fetchone()
+
+    async def update_economy(self, guild_id, user_id, balance):
+        if self.supabase:
+            self.supabase.table("economy").upsert({
+                "guild_id": str(guild_id),
+                "user_id": str(user_id),
+                "balance": balance
+            }).execute()
+        else:
+            cur = self.local.cursor()
+            cur.execute("INSERT OR REPLACE INTO economy (guild_id, user_id, balance) VALUES (?, ?, ?)",
+                        (str(guild_id), str(user_id), balance))
+            self.local.commit()
 
 
-class Database(commands.Cog):
-    """Auto-handles Supabase setup and connection"""
-
-    def __init__(self, bot):
-        self.bot = bot
-        ensure_tables_exist()
-
-    @commands.Cog.listener()
-    async def on_ready(self):
-        print("🧩 Database Cog ready and tables ensured.")
-
-
-async def setup(bot):
-    await bot.add_cog(Database(bot))
+# Global db object (import this in cogs)
+db = Database()
