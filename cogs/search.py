@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 import aiohttp
 from utils.embeds import elura_embed
+from cogs.database import supabase
 
 class Search(commands.Cog):
     """Modern and privacy-friendly search utilities for Elura."""
