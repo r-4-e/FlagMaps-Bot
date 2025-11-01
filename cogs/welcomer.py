@@ -5,7 +5,9 @@ from PIL import Image, ImageDraw, ImageFont
 from io import BytesIO
 from datetime import datetime
 import aiohttp
+from cogs.database import supabase
 import os
+
 
 # ✅ Supabase connection
 from supabase import create_client, Client
