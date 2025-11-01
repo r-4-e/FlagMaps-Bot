@@ -4,6 +4,7 @@ from discord.ext import commands
 from utils.embeds import elura_embed
 from supabase import create_client, Client
 import os
+from cogs.database import supabase
 
 # ✅ Initialize Supabase (no proxy, stable)
 SUPABASE_URL = os.getenv("SUPABASE_URL")
