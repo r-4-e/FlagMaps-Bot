@@ -2,13 +2,10 @@
 """
 Elura Utility — ImageSync Cog
 - Provides /copy, /paste, /listimages, /clearimages
-- Best-effort auto-creates Supabase storage bucket 'elura-images' and table 'images'
-- Stores image files in Supabase Storage when possible; falls back to original URL
-- Requires utils/supabase_client.supabase (created earlier)
-- NOTE: Some auto-create operations (DDL via the SQL API or bucket creation)
-  may require a Supabase Service Role key. If your anon key lacks permissions
-  the cog will still run, but will ask you to create the table/bucket manually.
+- Auto-creates Supabase storage bucket 'elura-images' and table 'images' (best effort)
+- Works without proxy; fully async-safe
 """
+
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -16,22 +13,21 @@ import aiohttp
 import io
 import os
 import asyncio
-import json
 from datetime import datetime
-from utils.supabase_client import supabase, SUPABASE_URL, SUPABASE_KEY  # you exported these in that module
+from utils.supabase_client import supabase, SUPABASE_URL, SUPABASE_KEY
 
-# Configuration
+# ------------------- Configuration -------------------
 BUCKET_NAME = "elura-images"
 TABLE_NAME = "images"
 MAX_COPY = 20
-ADMIN_ROLE_ID = 1431189241685344348  # role allowed to clear; change as needed
+ADMIN_ROLE_ID = 1431189241685344348  # adjust if needed
 
-# Color palette
+# Colors
 BLURPLE = discord.Color.blurple()
 GOLD = discord.Color.gold()
 ERROR = discord.Color.red()
 
-# SQL used to attempt table creation (Postgres)
+# Table creation SQL
 CREATE_TABLE_SQL = f"""
 CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
   id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
@@ -47,304 +43,186 @@ CREATE TABLE IF NOT EXISTS {TABLE_NAME} (
 """
 
 class ImageSync(commands.Cog):
+    """📸 Image Synchronization system using Supabase."""
+
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        # Try to ensure storage bucket and table exist (best-effort, non-blocking)
+        self.session = aiohttp.ClientSession()
         bot.loop.create_task(self._ensure_supabase_setup())
 
-    # ---------------------- Supabase helpers ----------------------
-    async def _ensure_supabase_setup(self):
-        """Best-effort: ensure storage bucket and table exist. Non-blocking."""
-        await asyncio.sleep(1)  # slight delay to let other inits finish
-        # 1) Ensure storage bucket
-        try:
-            # supabase.storage.create_bucket may require service role key; attempt it
-            try:
-                supabase.storage().create_bucket(BUCKET_NAME, public=False)
-                print(f"✅ Created storage bucket '{BUCKET_NAME}' (or already exists).")
-            except Exception:
-                # Some clients expose .from_() only; try to list buckets to check existence
-                try:
-                    buckets = supabase.storage().list_buckets()
-                    names = [b['name'] for b in buckets]
-                    if BUCKET_NAME not in names:
-                        print(f"⚠️ Could not create bucket '{BUCKET_NAME}'. You may need service-role key.")
-                    else:
-                        print(f"✅ Bucket '{BUCKET_NAME}' exists.")
-                except Exception:
-                    print("⚠️ Could not verify/create storage bucket. Continuing — storage might be unavailable.")
-        except Exception as e:
-            print(f"⚠️ Storage setup check failed: {e}")
+    def cog_unload(self):
+        """Ensure aiohttp session closes properly."""
+        self.bot.loop.create_task(self.session.close())
 
-        # 2) Ensure table exists (best-effort)
+    # ------------------- Supabase Setup -------------------
+    async def _ensure_supabase_setup(self):
+        await asyncio.sleep(1)
+        print("⚙️ Checking Supabase setup...")
+
+        # 1. Ensure bucket exists
         try:
-            resp = supabase.table(TABLE_NAME).select("*").limit(1).execute()
-            # if no exception, table exists (or returns empty)
+            buckets = supabase.storage.list_buckets()
+            names = [b["name"] for b in buckets]
+            if BUCKET_NAME not in names:
+                supabase.storage.create_bucket(BUCKET_NAME, public=False)
+                print(f"✅ Created storage bucket '{BUCKET_NAME}'.")
+            else:
+                print(f"✅ Bucket '{BUCKET_NAME}' already exists.")
+        except Exception as e:
+            print(f"⚠️ Could not verify/create bucket: {e}")
+
+        # 2. Ensure table exists
+        try:
+            supabase.table(TABLE_NAME).select("*").limit(1).execute()
             print(f"✅ Supabase table '{TABLE_NAME}' is accessible.")
         except Exception as e:
-            # Attempt to run SQL via the SQL API if we have a key that permits it
-            print(f"⚠️ Table '{TABLE_NAME}' not accessible or doesn't exist: {e}")
-            created = await self._attempt_create_table_via_sql(CREATE_TABLE_SQL)
-            if created:
-                print(f"✅ Created table '{TABLE_NAME}' via SQL API.")
-            else:
-                print(f"❌ Could not auto-create table '{TABLE_NAME}'. Please create it manually with the SQL below:\n{CREATE_TABLE_SQL}")
+            print(f"⚠️ Table check failed: {e}")
+            await self._attempt_create_table_via_sql(CREATE_TABLE_SQL)
 
-    async def _attempt_create_table_via_sql(self, sql: str) -> bool:
-        """
-        Attempt to run SQL via the Supabase SQL endpoint.
-        This typically requires the SERVICE_ROLE key; anon keys are often blocked.
-        Returns True on success, False otherwise.
-        """
+    async def _attempt_create_table_via_sql(self, sql: str):
+        """Try creating table via Supabase SQL API (requires service role key)."""
         try:
-            # SQL API endpoint
-            # This endpoint is usually: https://<project>.supabase.co/rest/v1/rpc
-            # Supabase provides a SQL API at /rest/v1/rpc/run_sql for some setups, but
-            # it can vary. We'll try the SQL function endpoint: /rpc
             url = SUPABASE_URL.rstrip("/") + "/rest/v1/rpc"
             headers = {
                 "Content-Type": "application/json",
                 "apikey": SUPABASE_KEY,
                 "Authorization": f"Bearer {SUPABASE_KEY}"
             }
-            # Many projects will not accept arbitrary SQL via anon key; call will likely fail.
-            # We'll attempt to call "sql" RPC with a payload if your project exposes such a function.
             payload = {"sql": sql}
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, headers=headers, json=payload, timeout=15) as r:
                     text = await r.text()
-                    if r.status in (200, 201, 204):
-                        return True
-                    else:
-                        print(f"[Supabase SQL API] status={r.status} text={text}")
-                        return False
+                    print(f"[SQL API] status={r.status} text={text}")
         except Exception as e:
-            print(f"[Supabase SQL API] exception: {e}")
-            return False
+            print(f"[imagesync] SQL create failed: {e}")
 
-    # ---------------------- Utility helpers ----------------------
+    # ------------------- Utility Helpers -------------------
     async def _download_bytes(self, url: str) -> bytes:
-        """Download a URL and return bytes."""
+        """Download bytes from a URL safely."""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get(url) as resp:
-                    if resp.status == 200:
-                        return await resp.read()
+            async with self.session.get(url) as resp:
+                if resp.status == 200:
+                    return await resp.read()
         except Exception as e:
-            print(f"[imagesync] Failed to download {url}: {e}")
+            print(f"[imagesync] Download failed for {url}: {e}")
         return b""
 
-    def _now_iso(self) -> str:
-        return datetime.utcnow().isoformat()
-
-    # ---------------------- Image storage ----------------------
-    def _storage_path_for(self, user_id: str, filename: str) -> str:
-        # create a predictable storage path
+    def _storage_path(self, user_id: str, filename: str) -> str:
         ts = datetime.utcnow().strftime("%Y%m%dT%H%M%SZ")
-        safe_name = filename.replace(" ", "_")
-        return f"{user_id}/{ts}_{safe_name}"
+        return f"{user_id}/{ts}_{filename.replace(' ', '_')}"
 
     def _is_admin(self, member: discord.Member) -> bool:
         return any(role.id == ADMIN_ROLE_ID for role in member.roles)
 
-    # ---------------------- Commands ----------------------
-    @app_commands.command(name="copy", description="Copy up to 20 image attachments from this channel to your global library.")
+    # ------------------- Commands -------------------
+    @app_commands.command(name="copy", description="Copy recent image attachments to your library.")
     async def copy(self, interaction: discord.Interaction):
         await interaction.response.defer(ephemeral=True)
-        channel = interaction.channel
-        author = interaction.user
-        copied = 0
+        copied, errors = 0, 0
         examples = []
-        errors = 0
 
-        async for msg in channel.history(limit=200):
+        async for msg in interaction.channel.history(limit=200):
             if copied >= MAX_COPY:
                 break
             for att in msg.attachments:
                 if att.content_type and att.content_type.startswith("image/"):
-                    # Download bytes
                     data = await self._download_bytes(att.url)
-                    storage_path = None
+                    storage_path = self._storage_path(str(interaction.user.id), att.filename)
                     try:
-                        # Try upload to Supabase Storage
-                        try:
-                            # supabase.storage().from_(bucket).upload(path, bytes)
-                            bucket = supabase.storage().from_(BUCKET_NAME)
-                            path = self._storage_path_for(str(author.id), att.filename)
-                            # upload expects file-like or bytes depending on client; try bytes
-                            bucket.upload(path, data)  # may raise if not allowed
-                            storage_path = path
-                        except Exception as e:
-                            # storage may be unavailable or permission denied; fallback to storing original URL
-                            print(f"[imagesync] Supabase storage upload failed: {e}")
-                            storage_path = None
-
-                        # Insert metadata into images table
-                        record = {
-                            "user_id": str(author.id),
-                            "server_id": str(channel.guild.id) if channel.guild else None,
-                            "channel_id": str(channel.id),
+                        supabase.storage.from_(BUCKET_NAME).upload(storage_path, data)
+                        supabase.table(TABLE_NAME).insert({
+                            "user_id": str(interaction.user.id),
+                            "server_id": str(interaction.guild.id),
+                            "channel_id": str(interaction.channel.id),
                             "author": str(msg.author),
                             "url": att.url,
                             "storage_path": storage_path,
                             "filename": att.filename,
-                            "timestamp": str(msg.created_at.isoformat())
-                        }
-                        supabase.table(TABLE_NAME).insert(record).execute()
+                            "timestamp": msg.created_at.isoformat()
+                        }).execute()
                         copied += 1
                         examples.append(att.filename)
                         if copied >= MAX_COPY:
                             break
                     except Exception as e:
-                        print(f"[imagesync] Failed to store image metadata: {e}")
+                        print(f"[imagesync] Copy failed: {e}")
                         errors += 1
-                        continue
 
-        # Reply with summary
         embed = discord.Embed(
             title="📥 Copy Complete",
-            description=f"Stored **{copied}** image(s) to your global library.",
-            color=BLURPLE,
-            timestamp=datetime.utcnow()
+            description=f"Stored **{copied}** image(s) to your library.",
+            color=BLURPLE
         )
         if examples:
             embed.add_field(name="Examples", value=", ".join(examples[:6]), inline=False)
         if errors:
-            embed.add_field(name="Errors", value=f"{errors} items failed to store.", inline=False)
-        embed.set_footer(text="Elura • Images Sync")
+            embed.add_field(name="Errors", value=f"{errors} image(s) failed.", inline=False)
+        embed.set_footer(text="Elura • Image Sync")
         await interaction.followup.send(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="paste", description="Paste images from your global library into this channel.")
-    @app_commands.describe(limit="Maximum images to paste (default: all)")
-    async def paste(self, interaction: discord.Interaction, limit: int = 20):
-        # permission: allow only channel send perms
-        if not interaction.channel.permissions_for(interaction.guild.me).send_messages:
-            return await interaction.response.send_message("I can't post in this channel.", ephemeral=True)
-
+    @app_commands.command(name="paste", description="Paste your saved images here.")
+    async def paste(self, interaction: discord.Interaction, limit: int = 10):
         await interaction.response.defer(ephemeral=True)
         user_id = str(interaction.user.id)
-        # fetch images owned by this user (most recent first)
+
         try:
-            resp = supabase.table(TABLE_NAME).select("*").eq("user_id", user_id).order("id", desc=True).limit(limit).execute()
-            items = resp.data or []
+            data = supabase.table(TABLE_NAME).select("*").eq("user_id", user_id).order("id", desc=True).limit(limit).execute()
         except Exception as e:
-            print(f"[imagesync] Failed to fetch images: {e}")
-            items = []
+            print(f"[imagesync] Fetch failed: {e}")
+            return await interaction.followup.send("⚠️ Could not fetch your images.", ephemeral=True)
 
-        if not items:
-            return await interaction.followup.send("📭 No images found in your library.", ephemeral=True)
-
-        total = len(items)
-        progress_msg = await interaction.followup.send(embed=discord.Embed(
-            title="📤 Paste Starting",
-            description=f"Pasting {total} image(s)...",
-            color=BLURPLE
-        ), ephemeral=True)
+        if not data.data:
+            return await interaction.followup.send("📭 No images found.", ephemeral=True)
 
         sent = 0
-        async with aiohttp.ClientSession() as session:
-            for rec in items:
-                try:
-                    file_bytes = None
-                    # prefer storage_path
-                    storage_path = rec.get("storage_path")
-                    filename = rec.get("filename") or "image.png"
-                    if storage_path:
-                        try:
-                            # download from Supabase Storage
-                            data = supabase.storage().from_(BUCKET_NAME).download(storage_path)
-                            # depending on client this returns bytes or an object; try to handle both
-                            if isinstance(data, (bytes, bytearray)):
-                                file_bytes = data
-                            else:
-                                # if it's a requests-like Response, attempt to read content
-                                try:
-                                    file_bytes = data.content
-                                except Exception:
-                                    file_bytes = None
-                        except Exception as e:
-                            print(f"[imagesync] Failed to download from storage: {e}")
-                            file_bytes = None
+        for rec in data.data:
+            try:
+                file_bytes = supabase.storage.from_(BUCKET_NAME).download(rec["storage_path"])
+                if not isinstance(file_bytes, (bytes, bytearray)):
+                    file_bytes = getattr(file_bytes, "content", b"")
+                await interaction.channel.send(file=discord.File(io.BytesIO(file_bytes), filename=rec["filename"]))
+                sent += 1
+                await asyncio.sleep(0.6)
+            except Exception as e:
+                print(f"[imagesync] Paste failed: {e}")
+                continue
 
-                    if not file_bytes:
-                        # fallback to original URL
-                        url = rec.get("url")
-                        if not url:
-                            continue
-                        async with session.get(url) as r:
-                            if r.status == 200:
-                                file_bytes = await r.read()
-                            else:
-                                print(f"[imagesync] Failed to download from URL {url} status {r.status}")
-                                continue
+        await interaction.followup.send(f"✅ Pasted {sent}/{len(data.data)} image(s).", ephemeral=True)
 
-                    discord_file = discord.File(io.BytesIO(file_bytes), filename=filename)
-                    caption = f"**{interaction.user.display_name} • from {rec.get('author')} • {rec.get('timestamp')}**"
-                    await interaction.channel.send(content=caption, file=discord_file)
-                    sent += 1
-
-                    # update progress message (ephemeral followup replaced with new content)
-                    await progress_msg.edit(embed=discord.Embed(
-                        title="📤 Pasting Images",
-                        description=f"Pasted **{sent}/{total}** images...",
-                        color=BLURPLE
-                    ))
-                    # safe rate limit spacing
-                    await asyncio.sleep(0.6)
-                except Exception as e:
-                    print(f"[imagesync] Error pasting item id {rec.get('id')}: {e}")
-                    continue
-
-        await progress_msg.edit(embed=discord.Embed(
-            title="✅ Paste Complete",
-            description=f"Pasted **{sent}/{total}** image(s).",
-            color=GOLD
-        ))
-        await interaction.followup.send(f"🎉 Finished pasting {sent}/{total} images!", ephemeral=True)
-
-    @app_commands.command(name="listimages", description="List stored images in your library (paginated).")
+    @app_commands.command(name="listimages", description="List your stored images.")
     async def listimages(self, interaction: discord.Interaction, page: int = 1):
         per_page = 8
+        offset = (page - 1) * per_page
         user_id = str(interaction.user.id)
-        offset = (max(1, page) - 1) * per_page
-
         try:
-            resp = supabase.table(TABLE_NAME).select("*").eq("user_id", user_id).order("id", desc=True).range(offset, offset+per_page-1).execute()
-            items = resp.data or []
+            resp = supabase.table(TABLE_NAME).select("*").eq("user_id", user_id).order("id", desc=True).range(offset, offset + per_page - 1).execute()
         except Exception as e:
-            print(f"[imagesync] Failed to list images: {e}")
-            items = []
+            print(f"[imagesync] List failed: {e}")
+            return await interaction.response.send_message("⚠️ Error fetching images.", ephemeral=True)
 
+        items = resp.data or []
         if not items:
-            return await interaction.response.send_message("📭 No images found on this page.", ephemeral=True)
+            return await interaction.response.send_message("📭 No images on this page.", ephemeral=True)
 
         embed = discord.Embed(title=f"📚 Your Images — Page {page}", color=BLURPLE)
         for rec in items:
-            name = rec.get("filename") or "image"
-            ts = rec.get("timestamp") or "unknown"
-            storage = "✅" if rec.get("storage_path") else "🔗"
-            embed.add_field(name=name, value=f"{storage} {rec.get('author')} • {ts}", inline=False)
-
-        embed.set_footer(text=f"Use /listimages page:<n> to view other pages")
+            embed.add_field(name=rec.get("filename", "image"), value=f"From {rec.get('author', 'unknown')} • {rec.get('timestamp', '')}", inline=False)
+        embed.set_footer(text="Use /listimages page:<n> for more pages.")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-    @app_commands.command(name="clearimages", description="Clear all images in your library (restricted).")
+    @app_commands.command(name="clearimages", description="Clear all your saved images (admin only).")
     async def clearimages(self, interaction: discord.Interaction):
-        # restricted: owner (user) or ADMIN_ROLE_ID role
         user = interaction.user
-        permitted = (str(user.id) == str(os.getenv("DISCORD_OWNER_ID"))) or self._is_admin(user)
-        if not permitted:
-            return await interaction.response.send_message("🚫 You don't have permission to run this command.", ephemeral=True)
+        if not self._is_admin(user):
+            return await interaction.response.send_message("🚫 You don't have permission.", ephemeral=True)
 
-        user_id = str(user.id)
         try:
-            # delete rows (and optionally delete storage objects)
-            resp = supabase.table(TABLE_NAME).delete().eq("user_id", user_id).execute()
-            # Optionally you can attempt to remove storage objects — left out unless service role key is present
-            await interaction.response.send_message("🗑️ Your library has been cleared.", ephemeral=True)
+            supabase.table(TABLE_NAME).delete().eq("user_id", str(user.id)).execute()
+            await interaction.response.send_message("🗑️ Your image library has been cleared.", ephemeral=True)
         except Exception as e:
-            print(f"[imagesync] Failed to clear images: {e}")
-            await interaction.response.send_message("⚠️ Failed to clear images. Check logs.", ephemeral=True)
+            print(f"[imagesync] Clear failed: {e}")
+            await interaction.response.send_message("⚠️ Failed to clear images.", ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ImageSync(bot))
