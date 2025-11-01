@@ -1,10 +1,11 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from cogs.database import supabase  # shared Supabase client
+from cogs.database import supabase  # Shared Supabase client
 from utils.embeds import elura_embed
 import datetime
 import random
+
 
 class Punishments(commands.Cog):
     """Handles moderation commands with Supabase logging."""
@@ -14,37 +15,24 @@ class Punishments(commands.Cog):
         self.ensure_tables()
 
     def ensure_tables(self):
-        """Auto-create tables in Supabase if they don’t exist."""
+        """Ensures the required tables exist in Supabase (auto-create if missing)."""
         try:
-            supabase.query("SELECT 1 FROM cases LIMIT 1").execute()
+            # Try selecting one row from 'cases' to check existence
+            supabase.table("cases").select("*").limit(1).execute()
         except Exception:
-            ddl = """
-            CREATE TABLE IF NOT EXISTS settings (
-                guild_id TEXT PRIMARY KEY,
-                welcome_channel TEXT,
-                modlog_channel TEXT
-            );
+            print("⚠️ Warning: Could not verify 'cases' table in Supabase.")
 
-            CREATE TABLE IF NOT EXISTS cases (
-                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                guild_id TEXT NOT NULL,
-                case_id BIGINT NOT NULL,
-                case_type TEXT NOT NULL,
-                user_id TEXT NOT NULL,
-                moderator_id TEXT NOT NULL,
-                reason TEXT,
-                timestamp TEXT,
-                UNIQUE (guild_id, case_id)
-            );
-            """
-            supabase.postgrest.rpc("exec", {"sql": ddl}).execute()
-            print("✅ Punishments tables auto-created in Supabase")
+        try:
+            supabase.table("settings").select("*").limit(1).execute()
+        except Exception:
+            print("⚠️ Warning: Could not verify 'settings' table in Supabase.")
 
     async def log_case(self, guild: discord.Guild, case_type: str, target, moderator, reason: str):
         """Logs moderation actions to Supabase and sends mod log."""
         case_id = random.randint(1000, 9999)
         timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
+        # Insert case record
         supabase.table("cases").insert({
             "guild_id": str(guild.id),
             "case_id": case_id,
@@ -55,7 +43,7 @@ class Punishments(commands.Cog):
             "timestamp": timestamp
         }).execute()
 
-        # Get modlog channel from settings
+        # Fetch modlog channel
         result = supabase.table("settings").select("modlog_channel").eq("guild_id", str(guild.id)).execute()
         data = result.data
 
@@ -71,9 +59,10 @@ class Punishments(commands.Cog):
                 )
                 embed.set_footer(text=f"Timestamp: {timestamp}")
                 await channel.send(embed=embed)
+
         return case_id
 
-    # --- Commands ---
+    # ================== MODERATION COMMANDS ==================
 
     @app_commands.command(name="warn", description="Warn a user for breaking server rules.")
     @app_commands.checks.has_permissions(manage_messages=True)
@@ -126,6 +115,7 @@ class Punishments(commands.Cog):
 
         embed = elura_embed("✅ Mod Log Set", f"Moderation cases will be logged in {channel.mention}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Punishments(bot))
