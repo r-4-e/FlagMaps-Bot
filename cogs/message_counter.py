@@ -9,6 +9,10 @@ import os
 # ------------------- Supabase Connection -------------------
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+
+if not SUPABASE_URL or not SUPABASE_KEY:
+    raise ValueError("❌ Missing SUPABASE_URL or SUPABASE_KEY in environment variables.")
+
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
 
@@ -17,29 +21,6 @@ class MessageCounter(commands.Cog):
 
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.ensure_table()
-
-    # ------------------- Auto-create table -------------------
-    def ensure_table(self):
-        try:
-            supabase.table("message_counter").select("*").limit(1).execute()
-        except Exception:
-            print("⚙️ Creating 'message_counter' table...")
-            try:
-                ddl = """
-                CREATE TABLE IF NOT EXISTS message_counter (
-                    id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-                    guild_id TEXT NOT NULL,
-                    user_id TEXT NOT NULL,
-                    count BIGINT DEFAULT 0,
-                    last_updated TIMESTAMP,
-                    UNIQUE (guild_id, user_id)
-                );
-                """
-                supabase.postgrest.rpc("exec", {"sql": ddl}).execute()
-                print("✅ message_counter table created successfully.")
-            except Exception as e:
-                print(f"⚠️ Failed to ensure table: {e}")
 
     # ------------------- Message Tracking -------------------
     @commands.Cog.listener()
@@ -51,24 +32,31 @@ class MessageCounter(commands.Cog):
         user_id = str(message.author.id)
 
         try:
-            existing = supabase.table("message_counter").select("*").eq("guild_id", guild_id).eq("user_id", user_id).execute()
+            existing = (
+                supabase.table("message_counter")
+                .select("*")
+                .eq("guild_id", guild_id)
+                .eq("user_id", user_id)
+                .execute()
+            )
 
             if existing.data:
                 count = existing.data[0]["count"] + 1
-                supabase.table("message_counter").update({
-                    "count": count,
-                    "last_updated": datetime.utcnow().isoformat()
-                }).eq("guild_id", guild_id).eq("user_id", user_id).execute()
+                supabase.table("message_counter").update(
+                    {"count": count, "last_updated": datetime.utcnow().isoformat()}
+                ).eq("guild_id", guild_id).eq("user_id", user_id).execute()
             else:
-                supabase.table("message_counter").insert({
-                    "guild_id": guild_id,
-                    "user_id": user_id,
-                    "count": 1,
-                    "last_updated": datetime.utcnow().isoformat()
-                }).execute()
+                supabase.table("message_counter").insert(
+                    {
+                        "guild_id": guild_id,
+                        "user_id": user_id,
+                        "count": 1,
+                        "last_updated": datetime.utcnow().isoformat(),
+                    }
+                ).execute()
 
         except Exception as e:
-            print(f"[MessageCounter] ⚠️ Error updating count: {e}")
+            print(f"[MessageCounter] ⚠️ Error updating message count: {e}")
 
     # ------------------- /messages command -------------------
     @app_commands.command(name="messages", description="Check your total message count in this server.")
@@ -77,7 +65,13 @@ class MessageCounter(commands.Cog):
         user_id = str(interaction.user.id)
 
         try:
-            data = supabase.table("message_counter").select("*").eq("guild_id", guild_id).eq("user_id", user_id).execute()
+            data = (
+                supabase.table("message_counter")
+                .select("*")
+                .eq("guild_id", guild_id)
+                .eq("user_id", user_id)
+                .execute()
+            )
             count = data.data[0]["count"] if data.data else 0
         except Exception as e:
             print(f"[MessageCounter] ⚠️ Fetch error: {e}")
@@ -86,7 +80,7 @@ class MessageCounter(commands.Cog):
         embed = discord.Embed(
             title="💬 Your Message Stats",
             description=f"You’ve sent **{count:,}** messages in **{interaction.guild.name}**!",
-            color=discord.Color.blurple()
+            color=discord.Color.blurple(),
         )
         embed.set_footer(text="Elura • Message Counter System")
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -97,7 +91,14 @@ class MessageCounter(commands.Cog):
         guild_id = str(interaction.guild.id)
 
         try:
-            data = supabase.table("message_counter").select("*").eq("guild_id", guild_id).order("count", desc=True).limit(10).execute()
+            data = (
+                supabase.table("message_counter")
+                .select("*")
+                .eq("guild_id", guild_id)
+                .order("count", desc=True)
+                .limit(10)
+                .execute()
+            )
         except Exception as e:
             print(f"[MessageCounter] ⚠️ Leaderboard fetch error: {e}")
             return await interaction.response.send_message("⚠️ Couldn’t fetch leaderboard.", ephemeral=True)
@@ -107,7 +108,7 @@ class MessageCounter(commands.Cog):
 
         embed = discord.Embed(
             title=f"🏆 Top Chatters – {interaction.guild.name}",
-            color=discord.Color.gold()
+            color=discord.Color.gold(),
         )
 
         desc = ""
