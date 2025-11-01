@@ -1,6 +1,7 @@
 import discord
 import traceback
 from discord.ext import commands
+from discord import app_commands
 from utils.embeds import error_embed, info_embed
 
 DEVELOPER_LOG_CHANNEL_ID = 1430955047524761754  # ⚠️ Replace with your bot-log channel ID
@@ -9,24 +10,25 @@ DEVELOPER_LOG_CHANNEL_ID = 1430955047524761754  # ⚠️ Replace with your bot-l
 class ErrorHandler(commands.Cog):
     """Global error handler for both prefix and slash commands."""
 
-    def __init__(self, bot):
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     # --- Prefix command errors ---
     @commands.Cog.listener()
-    async def on_command_error(self, ctx, error):
+    async def on_command_error(self, ctx: commands.Context, error):
         await self._handle_error(ctx, error, is_app=False)
 
     # --- Slash command errors ---
     @commands.Cog.listener()
     async def on_app_command_error(self, interaction: discord.Interaction, error):
-        # In discord.py 2.4+, AppCommandError is under discord.app_commands
-        if hasattr(discord, "app_commands") and isinstance(error, discord.app_commands.AppCommandError):
-            pass  # we just use it dynamically
+        # Ensure compatibility with discord.py 2.3+
+        if isinstance(error, app_commands.AppCommandError):
+            pass
         await self._handle_error(interaction, error, is_app=True)
 
     # --- Shared handler ---
     async def _handle_error(self, target, error, is_app: bool):
+        """Main centralized error handling logic."""
         # Ignore harmless ones
         if isinstance(error, (commands.CommandNotFound, discord.NotFound)):
             return
@@ -59,6 +61,7 @@ class ErrorHandler(commands.Cog):
         await self._send_dev_log(target, error)
 
     async def _send_embed(self, target, embed, is_app: bool):
+        """Sends an embed message safely (works for both ctx and interaction)."""
         try:
             if is_app:
                 if target.response.is_done():
@@ -71,6 +74,7 @@ class ErrorHandler(commands.Cog):
             print(f"[ErrorHandler] Failed to send embed: {e}")
 
     async def _send_dev_log(self, target, error):
+        """Logs detailed traceback info to the developer log channel."""
         try:
             channel = self.bot.get_channel(DEVELOPER_LOG_CHANNEL_ID)
             if not channel:
@@ -99,5 +103,5 @@ class ErrorHandler(commands.Cog):
             print(f"[ErrorHandler] Failed to send developer log: {e}")
 
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(ErrorHandler(bot))
