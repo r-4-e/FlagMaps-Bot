@@ -4,3 +4,6 @@ aiohttp==3.10.5
 supabase==2.4.0
 psycopg2-binary==2.9.9
 audioop-lts
+asyncpg==0.29.0
+Pillow==10.4.0
+googletrans==4.0.0-rc1
