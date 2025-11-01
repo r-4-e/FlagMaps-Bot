@@ -2,14 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from utils.embeds import elura_embed
-from supabase import create_client, Client
-import os
-from cogs.database import supabase
-
-# ✅ Initialize Supabase (no proxy, stable)
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+from cogs.database import supabase  # ✅ Shared Supabase client (no proxy issue)
+import random
 
 
 class Economy(commands.Cog):
@@ -22,25 +16,11 @@ class Economy(commands.Cog):
     def ensure_table(self):
         """Ensure the economy table exists."""
         try:
-            # Try selecting a row to confirm table exists
             test = supabase.table("economy").select("id").limit(1).execute()
             if test.data is not None:
                 print("✅ Economy table verified.")
         except Exception as e:
             print(f"⚠️ Could not verify economy table: {e}")
-            print("Attempting to auto-create table...")
-
-            # Attempt to create using Supabase SQL function (if defined)
-            try:
-                supabase.table("economy").insert({
-                    "guild_id": "0",
-                    "user_id": "0",
-                    "balance": 0
-                }).execute()
-                supabase.table("economy").delete().eq("guild_id", "0").execute()
-                print("✅ Economy table auto-created or already existed.")
-            except Exception as err:
-                print(f"⚠️ Auto-create failed: {err}")
 
     async def fetch_balance(self, guild_id: int, user_id: int) -> int:
         """Fetch or initialize a user's balance."""
@@ -91,7 +71,7 @@ class Economy(commands.Cog):
     @app_commands.checks.cooldown(1, 3600.0, key=lambda i: i.user.id)
     async def work(self, interaction: discord.Interaction):
         balance = await self.fetch_balance(interaction.guild.id, interaction.user.id)
-        earned = 150
+        earned = random.randint(100, 300)
         new_balance = balance + earned
         await self.update_balance(interaction.guild.id, interaction.user.id, new_balance)
         embed = elura_embed(
