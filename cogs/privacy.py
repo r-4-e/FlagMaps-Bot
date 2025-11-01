@@ -3,6 +3,7 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from datetime import datetime
+from cogs.database import supabase
 
 RESTRICTED_ROLE_ID = 1431189237687914550  # Privacy Manager Role ID
 
