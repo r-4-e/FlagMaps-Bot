@@ -1,38 +1,41 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from utils.supabase_client import supabase
+from cogs.database import supabase  # ✅ Use shared Supabase client
 import asyncio
 
-ADMIN_ROLE_ID = 1431189241685344348  # your restricted role id
+ADMIN_ROLE_ID = 1431189241685344348  # replace with your real admin role ID
+
 
 class Setup(commands.Cog):
-    def __init__(self, bot):
+    """🧩 Initializes Elura's database and settings for new servers."""
+
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     @app_commands.command(name="setup", description="Initialize Elura Utility for this server.")
     async def setup(self, interaction: discord.Interaction):
-        # Role restriction
+        # ✅ Permission check
         if not any(role.id == ADMIN_ROLE_ID for role in interaction.user.roles):
             await interaction.response.send_message("⚠️ You don't have permission to run setup.", ephemeral=True)
             return
 
         guild = interaction.guild
-        await interaction.response.send_message("⚙️ Setting up Elura Utility for this server...", ephemeral=True)
+        await interaction.response.send_message("⚙️ Starting setup for Elura Utility...", ephemeral=True)
 
-        # Simulated progress bar embed
+        # 🧭 Create progress embed
         embed = discord.Embed(
             title="🚀 Elura Setup In Progress",
-            description="Initializing Supabase connection...",
+            description="Connecting to Supabase...",
             color=discord.Color.blurple()
         )
         msg = await interaction.followup.send(embed=embed, wait=True)
 
         await asyncio.sleep(1.5)
-        embed.description = "✅ Connected to Supabase.\n\nCreating required tables..."
+        embed.description = "✅ Connected to Supabase.\n\nChecking required tables..."
         await msg.edit(embed=embed)
 
-        # List of required tables
+        # ✅ Required tables
         required_tables = ["economy", "counting", "warns", "settings"]
         created = []
 
@@ -48,7 +51,7 @@ class Setup(commands.Cog):
         else:
             embed.description += "\n\n✅ All tables already exist."
 
-        # Ensure guild is registered
+        # ✅ Ensure guild is registered
         existing = supabase.table("settings").select("guild_id").eq("guild_id", str(guild.id)).execute()
         if not existing.data:
             supabase.table("settings").insert({
@@ -59,6 +62,7 @@ class Setup(commands.Cog):
         else:
             embed.description += f"\n\n🔁 Guild `{guild.name}` already registered."
 
+        # ✅ Final visual polish
         embed.color = discord.Color.green()
         embed.title = "✅ Elura Setup Complete!"
         embed.add_field(name="Server", value=guild.name, inline=False)
@@ -67,6 +71,7 @@ class Setup(commands.Cog):
 
         await asyncio.sleep(1)
         await msg.edit(embed=embed)
+
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(Setup(bot))
