@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from googletrans import Translator
 from utils.embeds import elura_embed
+from cogs.database import supabase
 
 translator = Translator()
 
