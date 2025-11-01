@@ -1,40 +1,54 @@
+import os
+import random
+import asyncio
 import discord
 from discord.ext import commands
 from discord import app_commands
-import random
-import asyncio
+from supabase import create_client, Client
 from utils.embeds import elura_embed
 
+# ------------------- Supabase Connection -------------------
+SUPABASE_URL = os.getenv("SUPABASE_URL")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY")
+supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+
 class Fun(commands.Cog):
-    """Professional, high-quality entertainment commands for Elura."""
-    def __init__(self, bot):
+    """🎉 Fun & interactive commands for your community."""
+
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
 
     # 🎲 Coin Flip
     @app_commands.command(name="coinflip", description="Flip a coin — heads or tails?")
     async def coinflip(self, interaction: discord.Interaction):
         await interaction.response.defer()
-        embed = elura_embed("🪙 Flipping...", "The coin is spinning in the air...")
-        msg = await interaction.followup.send(embed=embed)
+        msg = await interaction.followup.send(embed=elura_embed("🪙 Flipping...", "The coin spins in the air..."))
         await asyncio.sleep(2)
         result = random.choice(["Heads", "Tails"])
-        color = discord.Color.gold() if result == "Heads" else discord.Color.blue()
-        final = elura_embed("🪙 Coin Flip Result", f"**{result}!**", color=color)
-        await msg.edit(embed=final)
+        color = discord.Color.gold() if result == "Heads" else discord.Color.blurple()
+        await msg.edit(embed=elura_embed("🪙 Coin Flip Result", f"**{result}!**", color=color))
 
-    # 🎯 Rock-Paper-Scissors
-    @app_commands.command(name="rps", description="Play rock-paper-scissors with Elura.")
+    # 🎯 Rock Paper Scissors
+    @app_commands.command(name="rps", description="Play Rock-Paper-Scissors with the bot!")
     async def rps(self, interaction: discord.Interaction):
         options = ["🪨 Rock", "📜 Paper", "✂️ Scissors"]
 
         view = discord.ui.View(timeout=15)
         for opt in options:
-            view.add_item(discord.ui.Button(label=opt.split()[1], emoji=opt[0]))
+            emoji, label = opt.split()
+            button = discord.ui.Button(label=label, emoji=emoji)
+            button.custom_id = opt
+            view.add_item(button)
 
         async def button_callback(interact: discord.Interaction):
-            user_choice = interact.data['custom_id'] if 'custom_id' in interact.data else interact.data['component_type']
+            user_choice = interact.data["custom_id"]
             bot_choice = random.choice(options)
-            result_embed = elura_embed("🎯 Rock Paper Scissors", f"You chose: **{user_choice}**\nElura chose: **{bot_choice}**")
+
+            result_embed = elura_embed(
+                "🎯 Rock Paper Scissors",
+                f"You chose: **{user_choice}**\nElura chose: **{bot_choice}**"
+            )
 
             if user_choice == bot_choice:
                 result_embed.color = discord.Color.yellow()
@@ -52,9 +66,8 @@ class Fun(commands.Cog):
 
         for child in view.children:
             child.callback = button_callback
-            child.custom_id = f"{child.emoji} {child.label}"
 
-        embed = elura_embed("🎮 Rock Paper Scissors", "Choose your move:")
+        embed = elura_embed("🎮 Rock Paper Scissors", "Choose your move below:")
         await interaction.response.send_message(embed=embed, view=view)
 
     # 💬 Random Quote
@@ -62,7 +75,7 @@ class Fun(commands.Cog):
     async def quote(self, interaction: discord.Interaction):
         quotes = [
             ("“The best way to predict the future is to invent it.”", "— Alan Kay"),
-            ("“Success is not final, failure is not fatal: It is the courage to continue that counts.”", "— Winston Churchill"),
+            ("“Success is not final, failure is not fatal: it is the courage to continue that counts.”", "— Winston Churchill"),
             ("“In the middle of difficulty lies opportunity.”", "— Albert Einstein"),
             ("“Don’t watch the clock; do what it does. Keep going.”", "— Sam Levenson"),
             ("“Dream big. Start small. Act now.”", "— Robin Sharma")
@@ -80,6 +93,7 @@ class Fun(commands.Cog):
         await asyncio.sleep(2)
         result = [random.choice(emojis) for _ in range(3)]
         display = " | ".join(result)
+
         if len(set(result)) == 1:
             text = f"{display}\n\n💎 **Jackpot! You win!**"
             color = discord.Color.gold()
@@ -89,7 +103,9 @@ class Fun(commands.Cog):
         else:
             text = f"{display}\n\n😢 Better luck next time!"
             color = discord.Color.red()
+
         await msg.edit(embed=elura_embed("🎰 Slot Machine", text, color=color))
 
-async def setup(bot):
+
+async def setup(bot: commands.Bot):
     await bot.add_cog(Fun(bot))
