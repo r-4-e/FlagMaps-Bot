@@ -15,6 +15,7 @@ import os
 import asyncio
 from datetime import datetime
 from utils.supabase_client import supabase, SUPABASE_URL, SUPABASE_KEY
+from cogs.database import supabase
 
 # ------------------- Configuration -------------------
 BUCKET_NAME = "elura-images"
