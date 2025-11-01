@@ -1,11 +1,11 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from cogs.database import supabase  # Shared Supabase client
+from cogs.database import supabase  # ✅ Shared Supabase client only
 from utils.embeds import elura_embed
 import datetime
 import random
-from cogs.database import supabase
+
 
 class Punishments(commands.Cog):
     """Handles moderation commands with Supabase logging."""
@@ -16,16 +16,11 @@ class Punishments(commands.Cog):
 
     def ensure_tables(self):
         """Ensures the required tables exist in Supabase (auto-create if missing)."""
-        try:
-            # Try selecting one row from 'cases' to check existence
-            supabase.table("cases").select("*").limit(1).execute()
-        except Exception:
-            print("⚠️ Warning: Could not verify 'cases' table in Supabase.")
-
-        try:
-            supabase.table("settings").select("*").limit(1).execute()
-        except Exception:
-            print("⚠️ Warning: Could not verify 'settings' table in Supabase.")
+        for table_name in ("cases", "settings"):
+            try:
+                supabase.table(table_name).select("*").limit(1).execute()
+            except Exception:
+                print(f"⚠️ Warning: Could not verify '{table_name}' table in Supabase.")
 
     async def log_case(self, guild: discord.Guild, case_type: str, target, moderator, reason: str):
         """Logs moderation actions to Supabase and sends mod log."""
