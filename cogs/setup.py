@@ -3,6 +3,7 @@ from discord.ext import commands
 from discord import app_commands
 from cogs.database import supabase  # ✅ Use shared Supabase client
 import asyncio
+from cogs.database import supabase
 
 ADMIN_ROLE_ID = 1431189241685344348  # replace with your real admin role ID
 
