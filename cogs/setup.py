@@ -1,11 +1,10 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from cogs.database import supabase  # ✅ Use shared Supabase client
 import asyncio
-from cogs.database import supabase
+from cogs.database import supabase  # ✅ use the shared Supabase client only
 
-ADMIN_ROLE_ID = 1431189241685344348  # replace with your real admin role ID
+ADMIN_ROLE_ID = 1431189241685344348  # Replace with your actual Admin Role ID
 
 
 class Setup(commands.Cog):
@@ -15,11 +14,10 @@ class Setup(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="setup", description="Initialize Elura Utility for this server.")
-    async def setup(self, interaction: discord.Interaction):
+    async def setup_command(self, interaction: discord.Interaction):
         # ✅ Permission check
         if not any(role.id == ADMIN_ROLE_ID for role in interaction.user.roles):
-            await interaction.response.send_message("⚠️ You don't have permission to run setup.", ephemeral=True)
-            return
+            return await interaction.response.send_message("⚠️ You don't have permission to run setup.", ephemeral=True)
 
         guild = interaction.guild
         await interaction.response.send_message("⚙️ Starting setup for Elura Utility...", ephemeral=True)
@@ -38,30 +36,33 @@ class Setup(commands.Cog):
 
         # ✅ Required tables
         required_tables = ["economy", "counting", "warns", "settings"]
-        created = []
+        missing_tables = []
 
         for table_name in required_tables:
             try:
                 supabase.table(table_name).select("*").limit(1).execute()
             except Exception:
-                created.append(table_name)
+                missing_tables.append(table_name)
 
         await asyncio.sleep(1)
-        if created:
-            embed.description += "\n\n🆕 Created tables: " + ", ".join(created)
+        if missing_tables:
+            embed.description += "\n\n🆕 Missing tables detected: " + ", ".join(missing_tables)
         else:
-            embed.description += "\n\n✅ All tables already exist."
+            embed.description += "\n\n✅ All required tables exist."
 
-        # ✅ Ensure guild is registered
-        existing = supabase.table("settings").select("guild_id").eq("guild_id", str(guild.id)).execute()
-        if not existing.data:
-            supabase.table("settings").insert({
-                "guild_id": str(guild.id),
-                "language": "en"
-            }).execute()
-            embed.description += f"\n\n🏠 Registered guild: `{guild.name}`"
-        else:
-            embed.description += f"\n\n🔁 Guild `{guild.name}` already registered."
+        # ✅ Ensure guild is registered in settings
+        try:
+            existing = supabase.table("settings").select("guild_id").eq("guild_id", str(guild.id)).execute()
+            if not existing.data:
+                supabase.table("settings").insert({
+                    "guild_id": str(guild.id),
+                    "language": "en"
+                }).execute()
+                embed.description += f"\n\n🏠 Registered guild: `{guild.name}`"
+            else:
+                embed.description += f"\n\n🔁 Guild `{guild.name}` already registered."
+        except Exception as e:
+            embed.description += f"\n\n❌ Database error while registering guild:\n`{e}`"
 
         # ✅ Final visual polish
         embed.color = discord.Color.green()
