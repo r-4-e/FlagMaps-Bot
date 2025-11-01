@@ -2,14 +2,9 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 from datetime import datetime
-from supabase import create_client, Client
 import os
-from cogs.database import supabase
-
-# ------------------- Supabase Connection -------------------
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+from supabase import create_client, Client
+from cogs.database import supabase  # ✅ This uses the existing shared client
 
 # ------------------- Role Restriction -------------------
 RESTRICTED_ROLE_ID = 1431189237687914550  # Counting Manager Role ID
