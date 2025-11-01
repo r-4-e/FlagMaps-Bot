@@ -5,7 +5,7 @@ from cogs.database import supabase  # Shared Supabase client
 from utils.embeds import elura_embed
 import datetime
 import random
-
+from cogs.database import supabase
 
 class Punishments(commands.Cog):
     """Handles moderation commands with Supabase logging."""
