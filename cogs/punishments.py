@@ -1,60 +1,67 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-from database.connector import db
+from cogs.database import supabase  # shared Supabase client
 from utils.embeds import elura_embed
 import datetime
 import random
 
 class Punishments(commands.Cog):
-    """Handles moderation commands with case logging."""
-    def __init__(self, bot):
+    """Handles moderation commands with Supabase logging."""
+
+    def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self.create_tables()
+        self.ensure_tables()
 
-    def create_tables(self):
-        """Automatically create required tables if they don't exist."""
-        cur = db.local.cursor()
+    def ensure_tables(self):
+        """Auto-create tables in Supabase if they don’t exist."""
+        try:
+            supabase.query("SELECT 1 FROM cases LIMIT 1").execute()
+        except Exception:
+            ddl = """
+            CREATE TABLE IF NOT EXISTS settings (
+                guild_id TEXT PRIMARY KEY,
+                welcome_channel TEXT,
+                modlog_channel TEXT
+            );
 
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            guild_id INTEGER PRIMARY KEY,
-            welcome_channel INTEGER,
-            modlog_channel INTEGER
-        )
-        """)
+            CREATE TABLE IF NOT EXISTS cases (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                guild_id TEXT NOT NULL,
+                case_id BIGINT NOT NULL,
+                case_type TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                moderator_id TEXT NOT NULL,
+                reason TEXT,
+                timestamp TEXT,
+                UNIQUE (guild_id, case_id)
+            );
+            """
+            supabase.postgrest.rpc("exec", {"sql": ddl}).execute()
+            print("✅ Punishments tables auto-created in Supabase")
 
-        cur.execute("""
-        CREATE TABLE IF NOT EXISTS cases (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            guild_id INTEGER,
-            case_id INTEGER,
-            case_type TEXT,
-            user_id INTEGER,
-            moderator_id INTEGER,
-            reason TEXT,
-            timestamp TEXT
-        )
-        """)
-
-        db.local.commit()
-
-    async def log_case(self, guild: discord.Guild, case_type: str, target: discord.Member, moderator: discord.Member, reason: str):
-        """Logs moderation actions to database and sends to mod log."""
+    async def log_case(self, guild: discord.Guild, case_type: str, target, moderator, reason: str):
+        """Logs moderation actions to Supabase and sends mod log."""
         case_id = random.randint(1000, 9999)
         timestamp = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
 
-        cur = db.local.cursor()
-        cur.execute(
-            "INSERT INTO cases (guild_id, case_id, case_type, user_id, moderator_id, reason, timestamp) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (guild.id, case_id, case_type, target.id, moderator.id, reason, timestamp)
-        )
-        db.local.commit()
+        supabase.table("cases").insert({
+            "guild_id": str(guild.id),
+            "case_id": case_id,
+            "case_type": case_type,
+            "user_id": str(target.id),
+            "moderator_id": str(moderator.id),
+            "reason": reason,
+            "timestamp": timestamp
+        }).execute()
 
-        cur.execute("SELECT modlog_channel FROM settings WHERE guild_id=?", (guild.id,))
-        row = cur.fetchone()
-        if row and row["modlog_channel"]:
-            channel = guild.get_channel(row["modlog_channel"])
+        # Get modlog channel from settings
+        result = supabase.table("settings").select("modlog_channel").eq("guild_id", str(guild.id)).execute()
+        data = result.data
+
+        if data and data[0].get("modlog_channel"):
+            channel_id = int(data[0]["modlog_channel"])
+            channel = guild.get_channel(channel_id)
             if channel:
                 embed = elura_embed(
                     f"🧾 Case #{case_id} | {case_type}",
@@ -67,6 +74,7 @@ class Punishments(commands.Cog):
         return case_id
 
     # --- Commands ---
+
     @app_commands.command(name="warn", description="Warn a user for breaking server rules.")
     @app_commands.checks.has_permissions(manage_messages=True)
     async def warn(self, interaction: discord.Interaction, member: discord.Member, reason: str = "No reason provided"):
@@ -111,14 +119,13 @@ class Punishments(commands.Cog):
     @app_commands.command(name="setmodlog", description="Set the moderation log channel.")
     @app_commands.checks.has_permissions(manage_guild=True)
     async def setmodlog(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        cur = db.local.cursor()
-        cur.execute(
-            "INSERT OR REPLACE INTO settings (guild_id, modlog_channel) VALUES (?, ?)",
-            (interaction.guild.id, channel.id)
-        )
-        db.local.commit()
+        supabase.table("settings").upsert({
+            "guild_id": str(interaction.guild.id),
+            "modlog_channel": str(channel.id)
+        }).execute()
+
         embed = elura_embed("✅ Mod Log Set", f"Moderation cases will be logged in {channel.mention}")
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-async def setup(bot):
+async def setup(bot: commands.Bot):
     await bot.add_cog(Punishments(bot))
